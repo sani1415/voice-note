@@ -61,9 +61,16 @@ const App: React.FC = () => {
     }
 
     const checkAuth = async () => {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      
-      if (authUser) {
+      try {
+        const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+        
+        if (authError) {
+          console.error('Error checking authentication:', authError);
+          setLoading(false);
+          return;
+        }
+        
+        if (authUser) {
         setUser(authUser);
         
         // Get user_id from public.users table
@@ -87,25 +94,38 @@ const App: React.FC = () => {
             setUserId(newUser.id);
           }
         }
+        setLoading(false);
+      } catch (err) {
+        console.error('Unexpected error during auth check:', err);
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     checkAuth();
 
-    // Listen for auth changes
+    // Listen for auth changes (including token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // Handle token refresh and other auth events
+      if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN' || (event === 'USER_UPDATED' && session?.user)) {
+        console.log('Auth event:', event);
+      }
+      
       if (session?.user) {
         setUser(session.user);
-        const { data: userData } = await supabase
-          .from('users')
-          .select('id')
-          .eq('auth_user_id', session.user.id)
-          .single();
-        if (userData) {
-          setUserId(userData.id);
+        try {
+          const { data: userData } = await supabase
+            .from('users')
+            .select('id')
+            .eq('auth_user_id', session.user.id)
+            .single();
+          if (userData) {
+            setUserId(userData.id);
+          }
+        } catch (err) {
+          console.error('Error fetching user ID:', err);
         }
-      } else {
+      } else if (event === 'SIGNED_OUT') {
+        // Clear all state on explicit sign out
         setUser(null);
         setUserId(null);
         setNotes([]);
@@ -187,7 +207,23 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     if (!supabase) return;
-    await supabase.auth.signOut();
+    
+    // Show confirmation dialog
+    if (!confirm('আপনি কি সত্যিই লগআউট করতে চান?')) {
+      return;
+    }
+    
+    try {
+      await supabase.auth.signOut();
+      // Explicitly clear state to prevent race conditions
+      setUser(null);
+      setUserId(null);
+      setNotes([]);
+      setCurrentNoteId(null);
+    } catch (err) {
+      console.error('Logout error:', err);
+      alert('লগআউটে সমস্যা হয়েছে। দয়া করে পুনরায় চেষ্টা করুন।');
+    }
   };
 
   const currentNote = notes.find((n) => n.id === currentNoteId);
