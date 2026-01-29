@@ -87,3 +87,41 @@ using (
   )
 );
 
+-- -------------------------------------------------------------------
+-- Simple single-user cloud notes table (no login needed)
+-- The React app uses this table when Supabase is configured but auth
+-- is not being used. All anonymous clients share the same data.
+-- -------------------------------------------------------------------
+
+create table if not exists public.cloud_notes (
+  id uuid primary key default uuid_generate_v4(),
+  title text not null default '',
+  paragraphs jsonb not null default '[]'::jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.cloud_notes enable row level security;
+
+create or replace function public.set_cloud_notes_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_set_cloud_notes_updated_at on public.cloud_notes;
+create trigger trg_set_cloud_notes_updated_at
+before update on public.cloud_notes
+for each row
+execute procedure public.set_cloud_notes_updated_at();
+
+-- Allow full access from the anon key (suitable for personal use only)
+create policy "anon full access to cloud_notes"
+on public.cloud_notes
+for all
+using (true)
+with check (true);
+
+

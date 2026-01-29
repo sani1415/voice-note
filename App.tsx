@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import Recorder from './components/Recorder';
 import { Note, TranscriptParagraph, RecordingStatus } from './types';
 import { Save, Calendar, Clock, Edit3, BookOpen } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 // Move EditableParagraph outside to prevent re-mounting on every render
 const EditableParagraph: React.FC<{
@@ -49,20 +50,74 @@ const App: React.FC = () => {
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
   const [status, setStatus] = useState<RecordingStatus>('idle');
 
-  // Load notes from local storage
+  const persistNoteToCloud = (note: Note) => {
+    if (!supabase) return;
+    (async () => {
+      await supabase.from('cloud_notes').upsert({
+        id: note.id,
+        title: note.title,
+        paragraphs: note.paragraphs,
+        created_at: new Date(note.createdAt).toISOString(),
+        updated_at: new Date(note.updatedAt).toISOString(),
+      });
+    })().catch((err) => console.error('Failed to sync note to Supabase', err));
+  };
+
+  const deleteNoteFromCloud = (id: string) => {
+    if (!supabase) return;
+    (async () => {
+      await supabase.from('cloud_notes').delete().eq('id', id);
+    })().catch((err) => console.error('Failed to delete note from Supabase', err));
+  };
+
+  // Load notes from Supabase if configured, otherwise from local storage
   useEffect(() => {
-    const savedNotes = localStorage.getItem('swarolipi_notes');
-    if (savedNotes) {
-      try {
-        const parsed = JSON.parse(savedNotes);
-        setNotes(parsed);
-        if (parsed.length > 0) {
-          setCurrentNoteId(parsed[0].id);
+    const loadNotes = async () => {
+      if (supabase) {
+        try {
+          const { data, error } = await supabase
+            .from('cloud_notes')
+            .select('*')
+            .order('updated_at', { ascending: false });
+
+          if (error) {
+            console.error('Error loading notes from Supabase', error);
+            return;
+          }
+
+          if (data) {
+            const mapped: Note[] = data.map((row: any) => ({
+              id: row.id,
+              title: row.title ?? '',
+              paragraphs: Array.isArray(row.paragraphs) ? row.paragraphs : [],
+              createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+              updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
+            }));
+            setNotes(mapped);
+            if (mapped.length > 0) {
+              setCurrentNoteId(mapped[0].id);
+            }
+          }
+        } catch (err) {
+          console.error('Unexpected error loading notes from Supabase', err);
         }
-      } catch (e) {
-        console.error("Failed to parse saved notes", e);
+      } else {
+        const savedNotes = localStorage.getItem('swarolipi_notes');
+        if (savedNotes) {
+          try {
+            const parsed = JSON.parse(savedNotes);
+            setNotes(parsed);
+            if (parsed.length > 0) {
+              setCurrentNoteId(parsed[0].id);
+            }
+          } catch (e) {
+            console.error("Failed to parse saved notes", e);
+          }
+        }
       }
-    }
+    };
+
+    loadNotes();
   }, []);
 
   // Save notes to local storage whenever notes state changes
@@ -82,6 +137,9 @@ const App: React.FC = () => {
     };
     setNotes([newNote, ...notes]);
     setCurrentNoteId(newNote.id);
+
+    // Sync to Supabase if available
+    persistNoteToCloud(newNote);
   };
 
   const handleDeleteNote = (id: string) => {
@@ -91,6 +149,8 @@ const App: React.FC = () => {
     if (currentNoteId === id) {
       setCurrentNoteId(filtered.length > 0 ? filtered[0].id : null);
     }
+
+    deleteNoteFromCloud(id);
   };
 
   const handleExportNotes = () => {
@@ -143,31 +203,48 @@ const App: React.FC = () => {
       };
       setNotes([newNote, ...notes]);
       setCurrentNoteId(newId);
+
+      persistNoteToCloud(newNote);
     } else {
-      setNotes((prev) =>
-        prev.map((n) => {
+      setNotes((prev) => {
+        const updated = prev.map((n) => {
           if (n.id === currentNoteId) {
             const newParagraph: TranscriptParagraph = {
               id: crypto.randomUUID(),
               text,
               timestamp: Date.now(),
             };
-            return {
+            const nextNote: Note = {
               ...n,
               paragraphs: [...n.paragraphs, newParagraph],
               updatedAt: Date.now(),
             };
+            // Sync the updated note
+            persistNoteToCloud(nextNote);
+            return nextNote;
           }
           return n;
-        })
-      );
+        });
+        return updated;
+      });
     }
     setStatus('idle');
   }, [currentNoteId, notes]);
 
   const updateTitle = (newTitle: string) => {
     setNotes((prev) =>
-      prev.map((n) => (n.id === currentNoteId ? { ...n, title: newTitle, updatedAt: Date.now() } : n))
+      prev.map((n) => {
+        if (n.id === currentNoteId) {
+          const updated: Note = {
+            ...n,
+            title: newTitle,
+            updatedAt: Date.now(),
+          };
+          persistNoteToCloud(updated);
+          return updated;
+        }
+        return n;
+      })
     );
   };
 
@@ -175,13 +252,15 @@ const App: React.FC = () => {
     setNotes((prev) =>
       prev.map((n) => {
         if (n.id === currentNoteId) {
-          return {
+          const updated: Note = {
             ...n,
             updatedAt: Date.now(),
-            paragraphs: n.paragraphs.map((p) => 
+            paragraphs: n.paragraphs.map((p) =>
               p.id === pId ? { ...p, text: newText } : p
-            )
+            ),
           };
+          persistNoteToCloud(updated);
+          return updated;
         }
         return n;
       })
