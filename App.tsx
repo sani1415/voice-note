@@ -1,9 +1,9 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Recorder from './components/Recorder';
+import Auth from './components/Auth';
 import { Note, TranscriptParagraph, RecordingStatus } from './types';
-import { Save, Calendar, Clock, Edit3, BookOpen } from 'lucide-react';
+import { Calendar, Clock, Edit3, BookOpen, LogOut, User } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 // Move EditableParagraph outside to prevent re-mounting on every render
@@ -49,81 +49,146 @@ const App: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
   const [status, setStatus] = useState<RecordingStatus>('idle');
+  const [user, setUser] = useState<any>(null);
+  const [userId, setUserId] = useState<string | null>(null); // user_id from public.users table
+  const [loading, setLoading] = useState(true);
 
-  const persistNoteToCloud = (note: Note) => {
-    if (!supabase) return;
-    (async () => {
-      await supabase.from('cloud_notes').upsert({
+  // Check authentication state and get user
+  useEffect(() => {
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
+    const checkAuth = async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      
+      if (authUser) {
+        setUser(authUser);
+        
+        // Get user_id from public.users table
+        const { data: userData, error } = await supabase
+          .from('users')
+          .select('id')
+          .eq('auth_user_id', authUser.id)
+          .single();
+
+        if (userData) {
+          setUserId(userData.id);
+        } else if (error) {
+          // User row doesn't exist, create it
+          const { data: newUser, error: createError } = await supabase
+            .from('users')
+            .insert({ auth_user_id: authUser.id })
+            .select()
+            .single();
+
+          if (newUser && !createError) {
+            setUserId(newUser.id);
+          }
+        }
+      }
+      setLoading(false);
+    };
+
+    checkAuth();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+        const { data: userData } = await supabase
+          .from('users')
+          .select('id')
+          .eq('auth_user_id', session.user.id)
+          .single();
+        if (userData) {
+          setUserId(userData.id);
+        }
+      } else {
+        setUser(null);
+        setUserId(null);
+        setNotes([]);
+        setCurrentNoteId(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Load notes from authenticated notes table
+  useEffect(() => {
+    if (!supabase || !userId) return;
+
+    const loadNotes = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('notes')
+          .select('*')
+          .eq('user_id', userId)
+          .order('updated_at', { ascending: false });
+
+        if (error) {
+          console.error('Error loading notes from Supabase', error);
+          return;
+        }
+
+        if (data) {
+          const mapped: Note[] = data.map((row: any) => ({
+            id: row.id,
+            title: row.title ?? '',
+            paragraphs: Array.isArray(row.paragraphs) ? row.paragraphs : [],
+            createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+            updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
+          }));
+          setNotes(mapped);
+          if (mapped.length > 0) {
+            setCurrentNoteId(mapped[0].id);
+          }
+        }
+      } catch (err) {
+        console.error('Unexpected error loading notes from Supabase', err);
+      }
+    };
+
+    loadNotes();
+  }, [userId]);
+
+  const persistNoteToCloud = async (note: Note) => {
+    if (!supabase || !userId) return;
+    
+    try {
+      await supabase.from('notes').upsert({
         id: note.id,
+        user_id: userId,
         title: note.title,
         paragraphs: note.paragraphs,
         created_at: new Date(note.createdAt).toISOString(),
         updated_at: new Date(note.updatedAt).toISOString(),
       });
-    })().catch((err) => console.error('Failed to sync note to Supabase', err));
+    } catch (err) {
+      console.error('Failed to sync note to Supabase', err);
+    }
   };
 
-  const deleteNoteFromCloud = (id: string) => {
+  const deleteNoteFromCloud = async (id: string) => {
+    if (!supabase || !userId) return;
+    
+    try {
+      await supabase.from('notes').delete().eq('id', id).eq('user_id', userId);
+    } catch (err) {
+      console.error('Failed to delete note from Supabase', err);
+    }
+  };
+
+  const handleAuthSuccess = () => {
+    // Auth component will trigger auth state change, which will reload notes
+  };
+
+  const handleLogout = async () => {
     if (!supabase) return;
-    (async () => {
-      await supabase.from('cloud_notes').delete().eq('id', id);
-    })().catch((err) => console.error('Failed to delete note from Supabase', err));
+    await supabase.auth.signOut();
   };
-
-  // Load notes from Supabase if configured, otherwise from local storage
-  useEffect(() => {
-    const loadNotes = async () => {
-      if (supabase) {
-        try {
-          const { data, error } = await supabase
-            .from('cloud_notes')
-            .select('*')
-            .order('updated_at', { ascending: false });
-
-          if (error) {
-            console.error('Error loading notes from Supabase', error);
-            return;
-          }
-
-          if (data) {
-            const mapped: Note[] = data.map((row: any) => ({
-              id: row.id,
-              title: row.title ?? '',
-              paragraphs: Array.isArray(row.paragraphs) ? row.paragraphs : [],
-              createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-              updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
-            }));
-            setNotes(mapped);
-            if (mapped.length > 0) {
-              setCurrentNoteId(mapped[0].id);
-            }
-          }
-        } catch (err) {
-          console.error('Unexpected error loading notes from Supabase', err);
-        }
-      } else {
-        const savedNotes = localStorage.getItem('swarolipi_notes');
-        if (savedNotes) {
-          try {
-            const parsed = JSON.parse(savedNotes);
-            setNotes(parsed);
-            if (parsed.length > 0) {
-              setCurrentNoteId(parsed[0].id);
-            }
-          } catch (e) {
-            console.error("Failed to parse saved notes", e);
-          }
-        }
-      }
-    };
-
-    loadNotes();
-  }, []);
-
-  // Save notes to local storage whenever notes state changes
-  useEffect(() => {
-    localStorage.setItem('swarolipi_notes', JSON.stringify(notes));
-  }, [notes]);
 
   const currentNote = notes.find((n) => n.id === currentNoteId);
 
@@ -137,8 +202,6 @@ const App: React.FC = () => {
     };
     setNotes([newNote, ...notes]);
     setCurrentNoteId(newNote.id);
-
-    // Sync to Supabase if available
     persistNoteToCloud(newNote);
   };
 
@@ -149,7 +212,6 @@ const App: React.FC = () => {
     if (currentNoteId === id) {
       setCurrentNoteId(filtered.length > 0 ? filtered[0].id : null);
     }
-
     deleteNoteFromCloud(id);
   };
 
@@ -168,10 +230,19 @@ const App: React.FC = () => {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const importedNotes = JSON.parse(e.target?.result as string);
         if (Array.isArray(importedNotes)) {
+          // Import notes and sync to Supabase
+          for (const note of importedNotes) {
+            const importedNote: Note = {
+              ...note,
+              id: note.id || crypto.randomUUID(),
+            };
+            await persistNoteToCloud(importedNote);
+          }
+          
           setNotes(prev => {
             const combined = [...importedNotes, ...prev];
             const unique = combined.filter((v, i, a) => a.findIndex(t => (t.id === v.id)) === i);
@@ -201,9 +272,8 @@ const App: React.FC = () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      setNotes([newNote, ...notes]);
+      setNotes(prev => [newNote, ...prev]);
       setCurrentNoteId(newId);
-
       persistNoteToCloud(newNote);
     } else {
       setNotes((prev) => {
@@ -219,7 +289,6 @@ const App: React.FC = () => {
               paragraphs: [...n.paragraphs, newParagraph],
               updatedAt: Date.now(),
             };
-            // Sync the updated note
             persistNoteToCloud(nextNote);
             return nextNote;
           }
@@ -229,7 +298,7 @@ const App: React.FC = () => {
       });
     }
     setStatus('idle');
-  }, [currentNoteId, notes]);
+  }, [currentNoteId]);
 
   const updateTitle = (newTitle: string) => {
     setNotes((prev) =>
@@ -267,6 +336,32 @@ const App: React.FC = () => {
     );
   }, [currentNoteId]);
 
+  // Show loading or auth screen
+  if (loading) {
+    return (
+      <div className="flex h-screen bg-slate-50 items-center justify-center">
+        <div className="text-slate-400">লোড হচ্ছে...</div>
+      </div>
+    );
+  }
+
+  if (!supabase) {
+    return (
+      <div className="flex h-screen bg-slate-50 items-center justify-center p-4">
+        <div className="text-center max-w-md">
+          <h2 className="text-2xl font-bold text-slate-800 mb-4">Supabase কনফিগার করা হয়নি</h2>
+          <p className="text-slate-600">
+            দয়া করে `.env.local` ফাইলে `VITE_SUPABASE_URL` এবং `VITE_SUPABASE_ANON_KEY` সেট করুন।
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !userId) {
+    return <Auth onAuthSuccess={handleAuthSuccess} />;
+  }
+
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden font-['Inter','Noto_Sans_Bengali']">
       <Sidebar
@@ -280,6 +375,22 @@ const App: React.FC = () => {
       />
 
       <main className="flex-1 flex flex-col relative">
+        {/* User info and logout button */}
+        <div className="absolute top-4 right-4 z-20 flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-white rounded-lg shadow-sm border border-slate-200 text-sm text-slate-600">
+            <User size={16} />
+            <span className="truncate max-w-[200px]">{user.email}</span>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all text-sm font-medium"
+            title="লগআউট"
+          >
+            <LogOut size={16} />
+            <span>লগআউট</span>
+          </button>
+        </div>
+
         {currentNote ? (
           <>
             <div className="p-8 pb-4 flex items-start justify-between">
