@@ -1,0 +1,7 @@
+{
+  "name": "Swarolipi AI (স্বরলিপি)",
+  "description": "An advanced voice-to-text note-taking application that transcribes your speech in real-time or after recording, organizes them into notes, and maintains a local library of your thoughts.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
