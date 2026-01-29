@@ -62,6 +62,7 @@ const App: React.FC = () => {
 
     const resolveUserId = async (authUserId: string) => {
       try {
+        // Try to get existing user row
         const { data: userData, error } = await supabase
           .from('users')
           .select('id')
@@ -70,8 +71,12 @@ const App: React.FC = () => {
 
         if (userData) {
           setUserId(userData.id);
-        } else if (error) {
-          // User row doesn't exist, create it
+          return;
+        }
+
+        if (error) {
+          console.warn('users table lookup failed:', error.message);
+          // Try to create the row
           const { data: newUser, error: createError } = await supabase
             .from('users')
             .insert({ auth_user_id: authUserId })
@@ -80,10 +85,19 @@ const App: React.FC = () => {
 
           if (newUser && !createError) {
             setUserId(newUser.id);
+            return;
+          }
+          if (createError) {
+            console.warn('users table insert failed:', createError.message);
           }
         }
+
+        // Fallback: use auth user ID directly so the app isn't stuck
+        console.warn('Falling back to auth user ID as userId');
+        setUserId(authUserId);
       } catch (err) {
-        console.error('Error resolving user ID:', err);
+        console.error('Error resolving user ID, using fallback:', err);
+        setUserId(authUserId);
       }
     };
 
