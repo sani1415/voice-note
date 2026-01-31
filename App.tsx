@@ -4,7 +4,7 @@ import Recorder from './components/Recorder';
 import Auth from './components/Auth';
 import UpdateDialog from './components/UpdateDialog';
 import { Note, TranscriptParagraph, RecordingStatus, Folder } from './types';
-import { Calendar, Clock, Edit3, BookOpen, LogOut, User, List, FileText, Undo2 } from 'lucide-react';
+import { Calendar, Clock, Edit3, BookOpen, LogOut, User, List, FileText, Undo2, Copy } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import {
   checkForUpdate,
@@ -286,15 +286,27 @@ const App: React.FC = () => {
 
   const currentNote = notes.find((n) => n.id === currentNoteId);
 
+  const bodyText = currentNote
+    ? currentNote.paragraphs.map((p) => p.text).join(' ').trim()
+    : '';
   const noteWordCount = currentNote
-    ? (currentNote.title + ' ' + currentNote.paragraphs.map((p) => p.text).join(' '))
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean).length
+    ? bodyText.split(/\s+/).filter(Boolean).length
     : 0;
   const noteCharCount = currentNote
-    ? (currentNote.title + currentNote.paragraphs.map((p) => p.text).join('')).length
+    ? currentNote.paragraphs.map((p) => p.text).join('').length
     : 0;
+
+  const [copyFeedback, setCopyFeedback] = useState(false);
+  const handleCopyNoteBody = useCallback(() => {
+    if (!currentNote) return;
+    const text = currentNote.paragraphs.map((p) => p.text).join('\n\n');
+    if (text) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopyFeedback(true);
+        setTimeout(() => setCopyFeedback(false), 1500);
+      });
+    }
+  }, [currentNote]);
 
   const notesForList = selectedFolderId == null
     ? notes
@@ -858,6 +870,15 @@ const App: React.FC = () => {
                         <span>{new Date(currentNote.createdAt).toLocaleDateString()}</span>
                         <span>{new Date(currentNote.updatedAt).toLocaleTimeString()}</span>
                         <span className="text-slate-300">{noteWordCount} শব্দ · {noteCharCount} অক্ষর</span>
+                        <button
+                          type="button"
+                          onClick={handleCopyNoteBody}
+                          className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700 font-medium"
+                          title="নোটের লেখা কপি করুন"
+                        >
+                          <Copy size={14} />
+                          {copyFeedback ? 'কপি হয়েছে' : 'কপি'}
+                        </button>
                         {folders.length > 0 && (
                           <select
                             value={currentNote.folder_id ?? ''}
@@ -975,6 +996,15 @@ const App: React.FC = () => {
                     {new Date(currentNote.updatedAt).toLocaleTimeString()}
                   </span>
                   <span className="text-slate-300">{noteWordCount} শব্দ · {noteCharCount} অক্ষর</span>
+                  <button
+                    type="button"
+                    onClick={handleCopyNoteBody}
+                    className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700 font-medium"
+                    title="নোটের লেখা কপি করুন"
+                  >
+                    <Copy size={14} className="md:w-3.5 md:h-3.5" />
+                    {copyFeedback ? 'কপি হয়েছে' : 'কপি'}
+                  </button>
                   {folders.length > 0 && (
                     <select
                       value={currentNote.folder_id ?? ''}
