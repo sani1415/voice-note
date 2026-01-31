@@ -2,9 +2,17 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Recorder from './components/Recorder';
 import Auth from './components/Auth';
+import UpdateDialog from './components/UpdateDialog';
 import { Note, TranscriptParagraph, RecordingStatus, Folder } from './types';
 import { Calendar, Clock, Edit3, BookOpen, LogOut, User, List, FileText, Undo2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
+import {
+  checkForUpdate,
+  applyUpdate,
+  notifyAppReady,
+  hasUpdateConfig,
+  type UpdateCheckResult,
+} from './services/updateService';
 
 const App: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -34,6 +42,8 @@ const App: React.FC = () => {
   const [replacingSelectionBody, setReplacingSelectionBody] = useState('');
   const overlayMobileRef = useRef<HTMLDivElement | null>(null);
   const overlayDesktopRef = useRef<HTMLDivElement | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState<UpdateCheckResult | null>(null);
+  const [updateUpdating, setUpdateUpdating] = useState(false);
 
   // Check authentication state and get user
   useEffect(() => {
@@ -535,6 +545,31 @@ const App: React.FC = () => {
       overlay.scrollLeft = e.target.scrollLeft;
     }
   }, []);
+
+  // Notify Live Update plugin that app is ready (avoids rollback)
+  useEffect(() => {
+    if (!loading && user && userId) notifyAppReady();
+  }, [loading, user, userId]);
+
+  // Check for in-app update (OTA) when app is ready and manifest URL is set
+  useEffect(() => {
+    if (!userId || !hasUpdateConfig()) return;
+    let cancelled = false;
+    checkForUpdate().then((result) => {
+      if (!cancelled && result.available) setUpdateAvailable(result);
+    });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  const handleUpdateConfirm = useCallback(async () => {
+    if (!updateAvailable || !updateAvailable.available || updateUpdating) return;
+    setUpdateUpdating(true);
+    try {
+      await applyUpdate(updateAvailable.version, updateAvailable.url);
+    } catch {
+      setUpdateUpdating(false);
+    }
+  }, [updateAvailable, updateUpdating]);
 
   /** Single body text: join/split by double newline; updates current note paragraphs */
   const updateNoteBody = useCallback((bodyText: string) => {
@@ -1038,6 +1073,14 @@ const App: React.FC = () => {
           </div>
         </div>
       </main>
+      {updateAvailable?.available && (
+        <UpdateDialog
+          update={updateAvailable}
+          onUpdate={handleUpdateConfirm}
+          onLater={() => setUpdateAvailable(null)}
+          updating={updateUpdating}
+        />
+      )}
     </div>
   );
 };
