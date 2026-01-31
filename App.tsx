@@ -53,6 +53,7 @@ const App: React.FC = () => {
   const [userId, setUserId] = useState<string | null>(null); // user_id from public.users table
   const [loading, setLoading] = useState(true);
   const [notesLoading, setNotesLoading] = useState(false);
+  const [notesLoadedOnce, setNotesLoadedOnce] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Check authentication state and get user
@@ -166,6 +167,7 @@ const App: React.FC = () => {
         setNotes([]);
         setCurrentNoteId(null);
         setNotesLoading(false);
+        setNotesLoadedOnce(false);
       }
     });
 
@@ -207,6 +209,7 @@ const App: React.FC = () => {
         console.error('Unexpected error loading notes from Supabase', err);
       } finally {
         setNotesLoading(false);
+        setNotesLoadedOnce(true);
       }
     };
 
@@ -442,6 +445,14 @@ const App: React.FC = () => {
       </div>
     );
   }
+  // Same full-screen loading until notes are ready — avoids position jump (one screen, not two)
+  if (notesLoading || !notesLoadedOnce) {
+    return (
+      <div className="flex h-screen bg-slate-50 items-center justify-center">
+        <div className="text-slate-400">লোড হচ্ছে...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden font-['Inter','Noto_Sans_Bengali']">
@@ -560,10 +571,6 @@ const App: React.FC = () => {
               />
             </div>
           </>
-        ) : notesLoading ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-4 pt-12 md:pt-0">
-            <div className="text-slate-400">নোট লোড হচ্ছে...</div>
-          </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400 px-4 pt-12 md:pt-0">
             <BookOpen size={60} className="md:w-20 md:h-20" strokeWidth={1} />
