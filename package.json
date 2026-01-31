@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",
+    "@capacitor/app": "^6.0.3",
     "@capacitor/core": "^6.1.2",
     "@capawesome/capacitor-live-update": "^6.8.0",
     "@google/genai": "^1.38.0",
