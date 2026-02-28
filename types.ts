@@ -20,3 +20,11 @@ export interface Note {
 }
 
 export type RecordingStatus = 'idle' | 'recording' | 'paused' | 'transcribing';
+
+export type RecordingMode = 'standard' | 'live';
+
+export interface LiveSessionCallbacks {
+  onTranscript: (text: string, isFinal: boolean) => void;
+  onError: (error: Error) => void;
+  onConnectionChange: (connected: boolean) => void;
+}
